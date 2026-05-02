@@ -10,7 +10,7 @@ from qb_rss_autodl import (
     read_archive_candidates,
     title_matches,
 )
-from qb_rss_gui import config_to_toml, credential_target
+from qb_rss_gui import config_to_toml, credential_target, parse_source_urls, source_urls_to_config
 
 
 SAMPLE_RSS = """<?xml version="1.0" encoding="utf-8"?>
@@ -128,6 +128,16 @@ class RssAutodlTests(unittest.TestCase):
     def test_credential_target_includes_url_and_user(self):
         target = credential_target("http://127.0.0.1:8080/", "yui")
         self.assertEqual(target, "AutoDownloadWithBT/qBittorrent/http://127.0.0.1:8080/yui")
+
+    def test_parse_source_urls_adds_scheme_and_deduplicates(self):
+        urls = parse_source_urls("www.kisssub.org/rss.xml\nhttps://www.kisssub.org/rss.xml/")
+
+        self.assertEqual(urls, ["https://www.kisssub.org/rss.xml"])
+
+    def test_source_urls_to_config_uses_host_names(self):
+        sources = source_urls_to_config(["https://www.kisssub.org/rss.xml"])
+
+        self.assertEqual(sources, [{"name": "kisssub.org", "url": "https://www.kisssub.org/rss.xml", "enabled": True}])
 
 
 if __name__ == "__main__":

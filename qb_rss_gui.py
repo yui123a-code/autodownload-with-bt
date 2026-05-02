@@ -5,6 +5,7 @@ import os
 import queue
 import threading
 import tkinter as tk
+import urllib.parse
 from ctypes import wintypes
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -167,6 +168,68 @@ def save_config(path: Path, config: dict[str, Any]) -> None:
     path.write_text(config_to_toml(config), encoding="utf-8")
 
 
+def default_config() -> dict[str, Any]:
+    return {
+        "qbittorrent": {
+            "url": "http://127.0.0.1:8080",
+            "username": "",
+            "password_env": "QBIT_PASSWORD",
+            "save_path": str(Path.home() / "Downloads"),
+            "category": "",
+            "organize_by_title": True,
+            "folder_name_max_length": 120,
+            "remember_password": True,
+        },
+        "archive": {"database": "archive.db", "include_in_search": True, "daily_time": "12:00"},
+        "sources": [],
+        "rules": [],
+    }
+
+
+def normalize_http_url(value: str) -> str:
+    value = value.strip()
+    if value and "://" not in value:
+        value = f"http://{value}"
+    return value.rstrip("/")
+
+
+def parse_source_urls(value: str) -> list[str]:
+    urls: list[str] = []
+    seen: set[str] = set()
+    for line in value.replace(",", "\n").replace(";", "\n").splitlines():
+        url = line.strip()
+        if not url:
+            continue
+        if "://" not in url:
+            url = f"https://{url}"
+        parsed = urllib.parse.urlparse(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError(f"Invalid RSS URL: {line.strip()}")
+        normalized = url.rstrip("/")
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        urls.append(normalized)
+    return urls
+
+
+def source_name_from_url(url: str, index: int) -> str:
+    parsed = urllib.parse.urlparse(url)
+    host = parsed.netloc.removeprefix("www.").split(":", 1)[0]
+    if not host:
+        host = "rss-source"
+    if index <= 1:
+        return host
+    return f"{host}-{index}"
+
+
+def source_urls_to_config(urls: list[str]) -> list[dict[str, Any]]:
+    return [
+        {"name": source_name_from_url(url, index), "url": url, "enabled": True}
+        for index, url in enumerate(urls, start=1)
+    ]
+
+
 class RssAutodlGui(tk.Tk):
     def __init__(self, config_path: Path = DEFAULT_CONFIG) -> None:
         super().__init__()
@@ -177,32 +240,33 @@ class RssAutodlGui(tk.Tk):
         self.config_path = config_path
         self.task_queue: queue.Queue[tuple[str, Any]] = queue.Queue()
         self.candidates: list[Any] = []
+        self.first_run_wizard_opened = False
 
         self.config_data = self.load_or_default_config()
         self.build_variables()
         self.build_ui()
         self.refresh_sources()
         self.after(100, self.process_queue)
-        self.after(700, self.auto_check_qbit)
+        if self.needs_first_run_wizard():
+            self.after(150, self.show_first_run_wizard)
+        self.after(900, self.auto_check_qbit)
 
     def load_or_default_config(self) -> dict[str, Any]:
         if self.config_path.exists():
             return load_config(self.config_path)
-        return {
-            "qbittorrent": {
-                "url": "http://127.0.0.1:8080",
-                "username": "",
-                "password_env": "QBIT_PASSWORD",
-                "save_path": str(Path.home() / "Downloads"),
-                "category": "",
-                "organize_by_title": True,
-                "folder_name_max_length": 120,
-                "remember_password": True,
-            },
-            "archive": {"database": "archive.db", "include_in_search": True, "daily_time": "12:00"},
-            "sources": [],
-            "rules": [],
-        }
+        return default_config()
+
+    def needs_first_run_wizard(self) -> bool:
+        qbit = self.current_config()["qbittorrent"]
+        has_source = any(str(source.get("url", "")).strip() for source in self.config_data.get("sources", []))
+        if not self.config_path.exists():
+            return True
+        return not (
+            str(qbit.get("url", "")).strip()
+            and str(qbit.get("username", "")).strip()
+            and str(qbit.get("save_path", "")).strip()
+            and has_source
+        )
 
     def build_variables(self) -> None:
         qbit = self.config_data.setdefault("qbittorrent", {})
@@ -376,6 +440,112 @@ class RssAutodlGui(tk.Tk):
         selected = filedialog.askdirectory(initialdir=self.save_path_var.get() or str(Path.home()))
         if selected:
             self.save_path_var.set(selected)
+
+    def show_first_run_wizard(self) -> None:
+        if self.first_run_wizard_opened:
+            return
+        self.first_run_wizard_opened = True
+
+        dialog = tk.Toplevel(self)
+        dialog.title("First Run Setup")
+        dialog.transient(self)
+        dialog.grab_set()
+        dialog.resizable(True, False)
+        dialog.columnconfigure(1, weight=1)
+
+        qbit_url_var = tk.StringVar(value=self.qbit_url_var.get() or "http://127.0.0.1:8080")
+        qbit_user_var = tk.StringVar(value=self.qbit_user_var.get())
+        qbit_password_var = tk.StringVar(value=self.qbit_password_var.get())
+        save_path_var = tk.StringVar(value=self.save_path_var.get() or str(Path.home() / "Downloads"))
+
+        ttk.Label(dialog, text="qBittorrent URL").grid(row=0, column=0, sticky=tk.W, padx=12, pady=(12, 4))
+        ttk.Entry(dialog, textvariable=qbit_url_var, width=66).grid(row=0, column=1, columnspan=2, sticky=tk.EW, padx=12, pady=(12, 4))
+
+        ttk.Label(dialog, text="Username").grid(row=1, column=0, sticky=tk.W, padx=12, pady=4)
+        ttk.Entry(dialog, textvariable=qbit_user_var).grid(row=1, column=1, columnspan=2, sticky=tk.EW, padx=12, pady=4)
+
+        ttk.Label(dialog, text="Password").grid(row=2, column=0, sticky=tk.W, padx=12, pady=4)
+        ttk.Entry(dialog, textvariable=qbit_password_var, show="*").grid(row=2, column=1, columnspan=2, sticky=tk.EW, padx=12, pady=4)
+
+        ttk.Label(dialog, text="Download Root").grid(row=3, column=0, sticky=tk.W, padx=12, pady=4)
+        ttk.Entry(dialog, textvariable=save_path_var).grid(row=3, column=1, sticky=tk.EW, padx=(12, 6), pady=4)
+
+        def browse_setup_save_path() -> None:
+            selected = filedialog.askdirectory(initialdir=save_path_var.get() or str(Path.home()), parent=dialog)
+            if selected:
+                save_path_var.set(selected)
+
+        ttk.Button(dialog, text="Browse", command=browse_setup_save_path).grid(row=3, column=2, sticky=tk.W, padx=(0, 12), pady=4)
+
+        ttk.Label(dialog, text="RSS Sources").grid(row=4, column=0, sticky=tk.NW, padx=12, pady=(4, 12))
+        rss_frame = ttk.Frame(dialog)
+        rss_frame.grid(row=4, column=1, columnspan=2, sticky=tk.EW, padx=12, pady=(4, 12))
+        rss_frame.columnconfigure(0, weight=1)
+        rss_text = tk.Text(rss_frame, width=66, height=5, wrap=tk.NONE)
+        existing_sources = [str(source.get("url", "")) for source in self.config_data.get("sources", []) if source.get("url")]
+        rss_text.insert("1.0", "\n".join(existing_sources))
+        rss_text.grid(row=0, column=0, sticky=tk.EW)
+        rss_scroll = ttk.Scrollbar(rss_frame, orient=tk.VERTICAL, command=rss_text.yview)
+        rss_text.configure(yscrollcommand=rss_scroll.set)
+        rss_scroll.grid(row=0, column=1, sticky=tk.NS)
+        ttk.Label(rss_frame, text="One RSS URL per line.").grid(row=1, column=0, sticky=tk.W, pady=(4, 0))
+
+        def submit() -> None:
+            try:
+                qbit_url = normalize_http_url(qbit_url_var.get())
+                parsed_qbit_url = urllib.parse.urlparse(qbit_url)
+                username = qbit_user_var.get().strip()
+                password = qbit_password_var.get()
+                save_path = save_path_var.get().strip()
+                source_urls = parse_source_urls(rss_text.get("1.0", tk.END))
+                if parsed_qbit_url.scheme not in {"http", "https"} or not parsed_qbit_url.netloc:
+                    raise ValueError("qBittorrent URL must be an HTTP or HTTPS address.")
+                if not username:
+                    raise ValueError("qBittorrent username is required.")
+                if not password:
+                    raise ValueError("qBittorrent password is required.")
+                if not save_path:
+                    raise ValueError("Download root is required.")
+                if not source_urls:
+                    raise ValueError("At least one RSS source is required.")
+                Path(save_path).mkdir(parents=True, exist_ok=True)
+            except (OSError, ValueError) as exc:
+                messagebox.showerror("Setup Incomplete", str(exc), parent=dialog)
+                return
+
+            self.qbit_url_var.set(qbit_url)
+            self.qbit_user_var.set(username)
+            self.qbit_password_var.set(password)
+            self.save_path_var.set(save_path)
+            self.organize_var.set(True)
+            self.remember_password_var.set(True)
+            self.config_data = self.current_config()
+            self.config_data["sources"] = source_urls_to_config(source_urls)
+            try:
+                save_config(self.config_path, self.config_data)
+            except OSError as exc:
+                messagebox.showerror("Setup Not Saved", str(exc), parent=dialog)
+                return
+            try:
+                self.save_remembered_password()
+            except OSError as exc:
+                messagebox.showwarning("Password Not Saved", str(exc), parent=dialog)
+            self.refresh_sources()
+            self.status_var.set(f"Saved first-run setup to {self.config_path}.")
+            dialog.destroy()
+            self.check_qbit(show_message=False)
+
+        buttons = ttk.Frame(dialog)
+        buttons.grid(row=5, column=0, columnspan=3, sticky=tk.E, padx=12, pady=(0, 12))
+        ttk.Button(buttons, text="Save Setup", command=submit).pack(side=tk.LEFT)
+        ttk.Button(buttons, text="Cancel", command=dialog.destroy).pack(side=tk.LEFT, padx=(6, 0))
+
+        dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
+        dialog.update_idletasks()
+        x = self.winfo_rootx() + max((self.winfo_width() - dialog.winfo_width()) // 2, 0)
+        y = self.winfo_rooty() + max((self.winfo_height() - dialog.winfo_height()) // 2, 0)
+        dialog.geometry(f"+{x}+{y}")
+        dialog.focus_set()
 
     def refresh_sources(self) -> None:
         self.sources_tree.delete(*self.sources_tree.get_children())

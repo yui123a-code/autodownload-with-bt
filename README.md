@@ -12,6 +12,12 @@ Run the packaged Windows executable:
 dist\AutoDownloadWithBT.exe
 ```
 
+For end users, download the Windows installer from GitHub Releases and run:
+
+```text
+AutoDownloadWithBT-Setup.exe
+```
+
 Start the desktop client:
 
 ```powershell
@@ -20,6 +26,7 @@ python .\qb_rss_gui.py
 
 The GUI can:
 
+- Show a first-run setup wizard for qBittorrent URL, username, password, download root, and RSS sources.
 - Add, remove, enable, and disable RSS sources.
 - Set the qBittorrent URL, username, category, and download root.
 - Remember the qBittorrent password in Windows Credential Manager and auto-check login on startup.
@@ -43,6 +50,22 @@ dist\AutoDownloadWithBT.exe
 ```
 
 The executable stores `config.toml`, `archive.db`, and `state.json` beside the `.exe`, not inside the temporary PyInstaller extraction folder.
+
+## Build The Installer
+
+Build the Windows installer with Inno Setup:
+
+```powershell
+.\build_installer.ps1
+```
+
+The output is:
+
+```text
+release\AutoDownloadWithBT-Setup.exe
+```
+
+Upload that installer to GitHub Releases for users who do not want to install Python.
 
 ## Setup
 
