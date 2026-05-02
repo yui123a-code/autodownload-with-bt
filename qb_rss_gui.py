@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import ctypes
 import os
 import queue
 import threading
 import tkinter as tk
+from ctypes import wintypes
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Any, Callable
@@ -28,6 +30,82 @@ class AppError(Exception):
     pass
 
 
+class FILETIME(ctypes.Structure):
+    _fields_ = [("dwLowDateTime", wintypes.DWORD), ("dwHighDateTime", wintypes.DWORD)]
+
+
+class CREDENTIALW(ctypes.Structure):
+    _fields_ = [
+        ("Flags", wintypes.DWORD),
+        ("Type", wintypes.DWORD),
+        ("TargetName", wintypes.LPWSTR),
+        ("Comment", wintypes.LPWSTR),
+        ("LastWritten", FILETIME),
+        ("CredentialBlobSize", wintypes.DWORD),
+        ("CredentialBlob", ctypes.POINTER(ctypes.c_byte)),
+        ("Persist", wintypes.DWORD),
+        ("AttributeCount", wintypes.DWORD),
+        ("Attributes", wintypes.LPVOID),
+        ("TargetAlias", wintypes.LPWSTR),
+        ("UserName", wintypes.LPWSTR),
+    ]
+
+
+CRED_TYPE_GENERIC = 1
+CRED_PERSIST_LOCAL_MACHINE = 2
+CREDENTIAL_PREFIX = "AutoDownloadWithBT/qBittorrent"
+
+
+def credential_target(url: str, username: str) -> str:
+    return f"{CREDENTIAL_PREFIX}/{url.strip().rstrip('/')}/{username.strip()}"
+
+
+def read_windows_credential(target: str) -> str:
+    if os.name != "nt":
+        return ""
+    advapi = ctypes.WinDLL("Advapi32", use_last_error=True)
+    advapi.CredReadW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.POINTER(ctypes.POINTER(CREDENTIALW)),
+    ]
+    advapi.CredReadW.restype = wintypes.BOOL
+    advapi.CredFree.argtypes = [wintypes.LPVOID]
+    advapi.CredFree.restype = None
+    credential = ctypes.POINTER(CREDENTIALW)()
+    if not advapi.CredReadW(target, CRED_TYPE_GENERIC, 0, ctypes.byref(credential)):
+        return ""
+    try:
+        size = credential.contents.CredentialBlobSize
+        if not size:
+            return ""
+        raw = ctypes.string_at(credential.contents.CredentialBlob, size)
+        return raw.decode("utf-16-le")
+    finally:
+        advapi.CredFree(credential)
+
+
+def write_windows_credential(target: str, username: str, password: str) -> None:
+    if os.name != "nt" or not password:
+        return
+    advapi = ctypes.WinDLL("Advapi32", use_last_error=True)
+    advapi.CredWriteW.argtypes = [ctypes.POINTER(CREDENTIALW), wintypes.DWORD]
+    advapi.CredWriteW.restype = wintypes.BOOL
+    blob = password.encode("utf-16-le")
+    blob_buffer = ctypes.create_string_buffer(blob)
+    credential = CREDENTIALW()
+    credential.Type = CRED_TYPE_GENERIC
+    credential.TargetName = target
+    credential.CredentialBlobSize = len(blob)
+    credential.CredentialBlob = ctypes.cast(blob_buffer, ctypes.POINTER(ctypes.c_byte))
+    credential.Persist = CRED_PERSIST_LOCAL_MACHINE
+    credential.UserName = username
+    if not advapi.CredWriteW(ctypes.byref(credential), 0):
+        error = ctypes.get_last_error()
+        raise OSError(error, "Failed to save password to Windows Credential Manager")
+
+
 def toml_string(value: str) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
@@ -48,6 +126,7 @@ def config_to_toml(config: dict[str, Any]) -> str:
         f"category = {toml_string(str(qbit.get('category', '')))}",
         f"organize_by_title = {toml_bool(bool(qbit.get('organize_by_title', True)))}",
         f"folder_name_max_length = {int(qbit.get('folder_name_max_length', 120))}",
+        f"remember_password = {toml_bool(bool(qbit.get('remember_password', True)))}",
         "",
         "[archive]",
         f"database = {toml_string(str(archive.get('database', 'archive.db')))}",
@@ -104,6 +183,7 @@ class RssAutodlGui(tk.Tk):
         self.build_ui()
         self.refresh_sources()
         self.after(100, self.process_queue)
+        self.after(700, self.auto_check_qbit)
 
     def load_or_default_config(self) -> dict[str, Any]:
         if self.config_path.exists():
@@ -117,6 +197,7 @@ class RssAutodlGui(tk.Tk):
                 "category": "",
                 "organize_by_title": True,
                 "folder_name_max_length": 120,
+                "remember_password": True,
             },
             "archive": {"database": "archive.db", "include_in_search": True, "daily_time": "12:00"},
             "sources": [],
@@ -128,10 +209,16 @@ class RssAutodlGui(tk.Tk):
         archive = self.config_data.setdefault("archive", {})
         self.qbit_url_var = tk.StringVar(value=str(qbit.get("url", "http://127.0.0.1:8080")))
         self.qbit_user_var = tk.StringVar(value=str(qbit.get("username", "")))
-        self.qbit_password_var = tk.StringVar(value=os.environ.get(str(qbit.get("password_env", "QBIT_PASSWORD")), ""))
+        remembered_password = read_windows_credential(
+            credential_target(str(qbit.get("url", "")), str(qbit.get("username", "")))
+        )
+        self.qbit_password_var = tk.StringVar(
+            value=os.environ.get(str(qbit.get("password_env", "QBIT_PASSWORD")), remembered_password)
+        )
         self.save_path_var = tk.StringVar(value=str(qbit.get("save_path", "")))
         self.category_var = tk.StringVar(value=str(qbit.get("category", "")))
         self.organize_var = tk.BooleanVar(value=bool(qbit.get("organize_by_title", True)))
+        self.remember_password_var = tk.BooleanVar(value=bool(qbit.get("remember_password", True)))
         self.include_archive_var = tk.BooleanVar(value=bool(archive.get("include_in_search", True)))
         self.query_var = tk.StringVar()
         self.include_var = tk.StringVar()
@@ -164,9 +251,12 @@ class RssAutodlGui(tk.Tk):
         ttk.Checkbutton(settings, text="Organize by title", variable=self.organize_var).grid(
             row=2, column=3, sticky=tk.W, pady=3
         )
+        ttk.Checkbutton(settings, text="Remember password and auto-login", variable=self.remember_password_var).grid(
+            row=3, column=1, sticky=tk.W, pady=3
+        )
 
         settings_buttons = ttk.Frame(settings)
-        settings_buttons.grid(row=3, column=0, columnspan=4, sticky=tk.EW, pady=(8, 0))
+        settings_buttons.grid(row=4, column=0, columnspan=4, sticky=tk.EW, pady=(8, 0))
         ttk.Button(settings_buttons, text="Save Settings", command=self.save_settings).pack(side=tk.LEFT)
         ttk.Button(settings_buttons, text="Check qBittorrent", command=self.check_qbit).pack(side=tk.LEFT, padx=6)
         ttk.Button(settings_buttons, text="Archive RSS Now", command=self.archive_now).pack(side=tk.LEFT)
@@ -254,6 +344,7 @@ class RssAutodlGui(tk.Tk):
             "category": self.category_var.get().strip(),
             "organize_by_title": bool(self.organize_var.get()),
             "folder_name_max_length": int(self.config_data.get("qbittorrent", {}).get("folder_name_max_length", 120)),
+            "remember_password": bool(self.remember_password_var.get()),
         }
         archive = dict(self.config_data.get("archive", {}))
         archive["include_in_search"] = bool(self.include_archive_var.get())
@@ -265,7 +356,21 @@ class RssAutodlGui(tk.Tk):
     def save_settings(self) -> None:
         self.config_data = self.current_config()
         save_config(self.config_path, self.config_data)
+        self.save_remembered_password()
         self.status_var.set(f"Saved settings to {self.config_path}.")
+
+    def save_remembered_password(self) -> None:
+        if not self.remember_password_var.get():
+            return
+        password = self.qbit_password_var.get()
+        if not password:
+            return
+        qbit = self.current_config()["qbittorrent"]
+        write_windows_credential(
+            credential_target(str(qbit["url"]), str(qbit["username"])),
+            str(qbit["username"]),
+            password,
+        )
 
     def browse_save_path(self) -> None:
         selected = filedialog.askdirectory(initialdir=self.save_path_var.get() or str(Path.home()))
@@ -422,7 +527,7 @@ class RssAutodlGui(tk.Tk):
         self.save_settings()
         config = self.current_config()
         qbit = config["qbittorrent"]
-        password = self.qbit_password_var.get() or os.environ.get(str(qbit.get("password_env", "QBIT_PASSWORD")), "")
+        password = self.qbit_password()
         if not password:
             messagebox.showerror("Missing Password", "Enter the qBittorrent password or set QBIT_PASSWORD.")
             return
@@ -446,20 +551,40 @@ class RssAutodlGui(tk.Tk):
         self.status_var.set(f"Added {count} item(s) to qBittorrent.")
         messagebox.showinfo("Added", f"Added {count} item(s) to qBittorrent.")
 
-    def check_qbit(self) -> None:
+    def qbit_password(self) -> str:
+        qbit = self.current_config()["qbittorrent"]
+        return (
+            self.qbit_password_var.get()
+            or os.environ.get(str(qbit.get("password_env", "QBIT_PASSWORD")), "")
+            or read_windows_credential(credential_target(str(qbit.get("url", "")), str(qbit.get("username", ""))))
+        )
+
+    def check_qbit(self, show_message: bool = True) -> None:
         self.save_settings()
         qbit = self.current_config()["qbittorrent"]
-        password = self.qbit_password_var.get() or os.environ.get(str(qbit.get("password_env", "QBIT_PASSWORD")), "")
+        password = self.qbit_password()
         if not password:
-            messagebox.showerror("Missing Password", "Enter the qBittorrent password or set QBIT_PASSWORD.")
+            if show_message:
+                messagebox.showerror("Missing Password", "Enter the qBittorrent password or set QBIT_PASSWORD.")
             return
 
         def work() -> tuple[Callable[[str], None], str]:
             client = QBittorrentClient(str(qbit["url"]), str(qbit["username"]), password)
-            client.login()
-            return self.set_status_message, "qBittorrent login OK."
+            try:
+                client.login()
+            except Exception as exc:
+                if not show_message:
+                    return self.set_status_text, f"qBittorrent auto-login failed: {exc}"
+                raise
+            if show_message:
+                return self.set_status_message, "qBittorrent login OK. Password will be remembered."
+            return self.set_status_text, "qBittorrent auto-login OK."
 
         self.run_worker("Checking qBittorrent login...", work)
+
+    def auto_check_qbit(self) -> None:
+        if self.qbit_password():
+            self.check_qbit(show_message=False)
 
     def archive_now(self) -> None:
         self.save_settings()
@@ -489,6 +614,9 @@ class RssAutodlGui(tk.Tk):
     def set_status_message(self, message: str) -> None:
         self.status_var.set(message)
         messagebox.showinfo("Status", message)
+
+    def set_status_text(self, message: str) -> None:
+        self.status_var.set(message)
 
 
 def main() -> None:

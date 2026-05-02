@@ -10,7 +10,7 @@ from qb_rss_autodl import (
     read_archive_candidates,
     title_matches,
 )
-from qb_rss_gui import config_to_toml
+from qb_rss_gui import config_to_toml, credential_target
 
 
 SAMPLE_RSS = """<?xml version="1.0" encoding="utf-8"?>
@@ -121,8 +121,13 @@ class RssAutodlTests(unittest.TestCase):
             }
         )
         self.assertIn('save_path = "E:\\\\media"', text)
+        self.assertIn("remember_password = true", text)
         self.assertIn("[[sources]]", text)
         self.assertIn('url = "https://example.com/rss.xml"', text)
+
+    def test_credential_target_includes_url_and_user(self):
+        target = credential_target("http://127.0.0.1:8080/", "yui")
+        self.assertEqual(target, "AutoDownloadWithBT/qBittorrent/http://127.0.0.1:8080/yui")
 
 
 if __name__ == "__main__":

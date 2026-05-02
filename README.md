@@ -22,6 +22,7 @@ The GUI can:
 
 - Add, remove, enable, and disable RSS sources.
 - Set the qBittorrent URL, username, category, and download root.
+- Remember the qBittorrent password in Windows Credential Manager and auto-check login on startup.
 - Search current RSS feeds plus the local archive.
 - Preview title-derived save paths before download.
 - Add selected items to qBittorrent only after confirmation.
@@ -68,7 +69,10 @@ save_path = "E:\\media"
 category = ""
 organize_by_title = true
 folder_name_max_length = 120
+remember_password = true
 ```
+
+The qBittorrent password is not written to `config.toml`. When `Remember password and auto-login` is enabled in the GUI, the password is saved under the current Windows user in Credential Manager.
 
 ## Search By Title
 
@@ -166,6 +170,13 @@ To install a Windows scheduled task that archives RSS feeds every day at 12:00:
 ```
 
 The scheduled task runs [run_archive.ps1](run_archive.ps1), writes logs to `archive.log`, and does not require the qBittorrent password.
+
+The task is configured to:
+
+- Run daily at 12:00.
+- Run once when the current Windows user logs in.
+- Run as soon as possible if the 12:00 schedule was missed because the PC was off.
+- Retry up to three times at 15-minute intervals if archiving fails.
 
 ## Folder Organization
 

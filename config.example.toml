@@ -6,6 +6,7 @@ save_path = "D:\\Downloads\\Media"
 category = ""
 organize_by_title = true
 folder_name_max_length = 120
+remember_password = true
 
 [archive]
 database = "archive.db"
