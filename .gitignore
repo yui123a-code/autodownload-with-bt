@@ -1,0 +1,10 @@
+state.json
+archive.db
+archive.db-*
+test_archive.db*
+config.toml
+*.local.toml
+.env
+__pycache__/
+tmp*/
+*.pyc

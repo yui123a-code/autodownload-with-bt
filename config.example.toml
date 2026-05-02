@@ -1,0 +1,25 @@
+[qbittorrent]
+url = "http://127.0.0.1:8080"
+username = "admin"
+password_env = "QBIT_PASSWORD"
+save_path = "D:\\Downloads\\Media"
+category = ""
+organize_by_title = true
+folder_name_max_length = 120
+
+[archive]
+database = "archive.db"
+include_in_search = true
+daily_time = "12:00"
+
+[[sources]]
+name = "example-rss"
+url = "https://example.com/rss.xml"
+enabled = true
+
+[[rules]]
+name = "example-disabled"
+enabled = false
+keywords = ["example-title"]
+exclude = ["720p", "CAM", "TC", "sample"]
+limit = 20
