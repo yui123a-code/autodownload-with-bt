@@ -13,6 +13,9 @@ if (-not (Test-Path -LiteralPath $python312)) {
     --windowed `
     --name "AutoDownloadWithBT" `
     ".\qb_rss_gui.py"
+if ($LASTEXITCODE -ne 0) {
+    throw "PyInstaller failed with exit code $LASTEXITCODE"
+}
 
 Copy-Item -LiteralPath ".\config.example.toml" -Destination ".\dist\config.example.toml" -Force
 Write-Host "Built .\dist\AutoDownloadWithBT.exe"
