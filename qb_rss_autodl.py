@@ -21,7 +21,10 @@ from pathlib import Path
 from typing import Any
 
 
-APP_DIR = Path(__file__).resolve().parent
+if getattr(sys, "frozen", False):
+    APP_DIR = Path(sys.executable).resolve().parent
+else:
+    APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = APP_DIR / "config.toml"
 DEFAULT_STATE = APP_DIR / "state.json"
 DEFAULT_ARCHIVE = APP_DIR / "archive.db"

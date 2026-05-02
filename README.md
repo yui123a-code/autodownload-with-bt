@@ -6,6 +6,12 @@ Use it only with feeds and content you are authorized to download.
 
 ## GUI
 
+Run the packaged Windows executable:
+
+```text
+dist\AutoDownloadWithBT.exe
+```
+
 Start the desktop client:
 
 ```powershell
@@ -20,6 +26,22 @@ The GUI can:
 - Preview title-derived save paths before download.
 - Add selected items to qBittorrent only after confirmation.
 - Run a manual RSS archive.
+
+## Build The EXE
+
+Build the Windows executable with PyInstaller:
+
+```powershell
+.\build_exe.ps1
+```
+
+The output is:
+
+```text
+dist\AutoDownloadWithBT.exe
+```
+
+The executable stores `config.toml`, `archive.db`, and `state.json` beside the `.exe`, not inside the temporary PyInstaller extraction folder.
 
 ## Setup
 

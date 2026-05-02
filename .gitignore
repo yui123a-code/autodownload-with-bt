@@ -8,3 +8,6 @@ config.toml
 __pycache__/
 tmp*/
 *.pyc
+build/
+dist/
+*.spec
